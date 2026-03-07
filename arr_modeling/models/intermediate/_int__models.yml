@@ -61,17 +61,21 @@ models:
 
     - name: int_account_monthly_arr
       description: >
-          Account-level ARR aggregated to monthly granularity. One row per
+          Account-level ARR aggregated to monthly granularity, extended with a
+          synthetic churn row and LAG-based previous_month_arr. One row per
           (account_id, date_month).
 
-          Sums ARR across all active subscriptions for an account in each month,
-          handling the case of multiple simultaneous subscriptions (different product
-          lines or overlapping renewal periods). Also pre-computes previous_month_arr
-          via LAG so the mart layer can derive arr_change and change_category without
-          re-running window functions.
+          Pipeline (see inline SQL comments for detail):
+            1. Aggregate ARR across all active subscriptions per account × month.
+            2. Compute first_active_month / last_active_month per account.
+            3. Append one synthetic churn row per account (the month after the
+               last active month, arr = 0). This makes the churn event explicit —
+               without it, the transition from active to inactive would never appear
+               in fct_monthly_arr. Does NOT fill gaps between subscriptions.
+            4. Run LAG for previous_month_arr over the full combined dataset
+               (real + synthetic) so all window values are consistent.
 
-          previous_month_arr is 0 for the first month an account appears, which
-          correctly classifies it as 'new' in the mart layer.
+          Consumed by fct_monthly_arr, which only adds classification logic.
       tests:
           - dbt_utils.unique_combination_of_columns:
                 arguments:
@@ -85,21 +89,32 @@ models:
                 - not_null
 
           - name: date_month
-            description: First day of the calendar month.
+            description: >
+                First day of the calendar month. Includes real active months plus
+                one synthetic churn month per account (the month after last_active_month).
             tests:
                 - not_null
 
           - name: monthly_arr
             description: >
                 Total Annual Recurring Revenue in USD across all active subscriptions
-                for this account in this month.
+                for this account in this month. 0.0 for the synthetic churn row.
+            tests:
+                - not_null
+
+          - name: first_active_month
+            description: >
+                First calendar month the account ever had at least one active
+                subscription. Used by fct_monthly_arr to distinguish 'new' (first
+                month ever) from 'reactivation' (arr > 0 after a gap).
             tests:
                 - not_null
 
           - name: previous_month_arr
             description: >
-                Total ARR for the immediately preceding month. 0 if this is the first
-                month the account appears in the data. Used by fct_monthly_arr to
-                compute arr_change and determine change_category.
+                Total ARR for the immediately preceding month in the dataset.
+                0 for the first month the account appears. For the synthetic churn
+                row this equals the last real active month's ARR (LAG over combined
+                dataset).
             tests:
                 - not_null

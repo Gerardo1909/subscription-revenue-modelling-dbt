@@ -1,0 +1,105 @@
+version: 2
+
+models:
+    - name: int_date_spine
+      description: >
+          Monthly date spine from the earliest subscription start_date to the latest
+          subscription end_date in stg_subscriptions. One row per month (first day of
+          month). The range is computed dynamically from the data using run_query so
+          the spine extends automatically as new subscriptions are loaded.
+
+          Used by int_subscription_months to drive the fan-out join.
+      columns:
+          - name: date_month
+            description: First day of each calendar month in the subscription data range.
+            tests:
+                - not_null
+                - unique
+
+    - name: int_subscription_months
+      description: >
+          Fan-out model: one row per subscription × active month.
+
+          A subscription is active in a month when it is live on the LAST DAY of
+          that month: start_date <= last_day(month) AND
+          end_date >= last_day(month). This handles mid-month start/end dates
+          correctly — a subscription expiring on the 8th is still active in that
+          month's last-day evaluation.
+
+          Source: stg_subscriptions joined with int_date_spine.
+      tests:
+          - dbt_utils.unique_combination_of_columns:
+                arguments:
+                    combination_of_columns:
+                        - subscription_id
+                        - date_month
+      columns:
+          - name: account_id
+            description: Numeric identifier for the customer account.
+            tests:
+                - not_null
+
+          - name: subscription_id
+            description: Unique identifier for the subscription period.
+            tests:
+                - not_null
+
+          - name: date_month
+            description: First day of the calendar month in which this subscription is active.
+            tests:
+                - not_null
+
+          - name: product_line
+            description: Product family associated with the subscription.
+            tests:
+                - not_null
+
+          - name: arr_usd
+            description: Annual Recurring Revenue in USD for this subscription in this month.
+            tests:
+                - not_null
+
+    - name: int_account_monthly_arr
+      description: >
+          Account-level ARR aggregated to monthly granularity. One row per
+          (account_id, date_month).
+
+          Sums ARR across all active subscriptions for an account in each month,
+          handling the case of multiple simultaneous subscriptions (different product
+          lines or overlapping renewal periods). Also pre-computes previous_month_arr
+          via LAG so the mart layer can derive arr_change and change_category without
+          re-running window functions.
+
+          previous_month_arr is 0 for the first month an account appears, which
+          correctly classifies it as 'new' in the mart layer.
+      tests:
+          - dbt_utils.unique_combination_of_columns:
+                arguments:
+                    combination_of_columns:
+                        - account_id
+                        - date_month
+      columns:
+          - name: account_id
+            description: Numeric identifier for the customer account.
+            tests:
+                - not_null
+
+          - name: date_month
+            description: First day of the calendar month.
+            tests:
+                - not_null
+
+          - name: monthly_arr
+            description: >
+                Total Annual Recurring Revenue in USD across all active subscriptions
+                for this account in this month.
+            tests:
+                - not_null
+
+          - name: previous_month_arr
+            description: >
+                Total ARR for the immediately preceding month. 0 if this is the first
+                month the account appears in the data. Used by fct_monthly_arr to
+                compute arr_change and determine change_category.
+            tests:
+                - not_null

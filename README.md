@@ -49,6 +49,8 @@ marts/fct_monthly_arr              -- final fact table with change categories
 
 ## Quick Start
 
+> Ideally you should have UV installed. See: https://docs.astral.sh/uv/getting-started/installation/
+
 ```bash
 # Clone and install dependencies
 git clone https://github.com/Gerardo1909/subscription-revenue-modelling-dbt> && cd subscription-revenue-modelling-dbt
@@ -59,8 +61,8 @@ uv sync
 
 # Install dbt packages and build
 cd arr_modeling
-dbt deps
-dbt build
+uv run dbt deps
+uv run dbt build
 ```
 
 ## Project Structure

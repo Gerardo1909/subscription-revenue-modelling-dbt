@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "dbt-duckdb>=1.10.0",
+    "streamlit>=1.40",
+    "plotly>=5.0",
+    "pandas>=2.0",
 ]
 license = {text = "MIT"}
 authors = [

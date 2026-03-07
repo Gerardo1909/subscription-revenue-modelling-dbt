@@ -80,13 +80,50 @@ arr_modeling/
   tests/               -- singular data tests
 ```
 
+## BI checks
+
+After running `dbt build`, you culd execute a couple of interesting queries from a BI perspective:
+
+```bash
+uv run streamlit run scripts/BI_queries.py
+```
+
+This will print on console the result of the following two queries:
+
+1. To check on quarantine records:
+
+```sql
+SELECT quarantine_reason, count(*) as records
+FROM main.stg_subscriptions_quarantine
+GROUP BY 1
+ORDER BY 2 DESC;
+```
+
+2. To check on main fact table:
+
+```sql
+SELECT date_month, monthly_arr, change_category
+FROM main.fct_monthly_arr
+ORDER BY date_month;
+```
+
+## Visualization
+
+After running `dbt build`, launch the ARR dashboard:
+
+```bash
+uv run streamlit run scripts/app.py
+```
+
+Opens at http://localhost:8501. Shows KPI cards and ARR trending chart.
+
 ## Key Design Decisions
 
 ### Data Quality & Staging
 
 - **End date is inclusive**: a subscription with `end_date = Sep 8` is considered active throughout September (evaluated at last day of month).
 - **Free subscriptions**: ARR sentinel values (`1e-9`) are mapped to `$0.00` via `CASE WHEN arr > 0 AND arr < 0.001`. The positive guard prevents silently zeroing legitimate negative values.
-- **deal_close_date rule**: a subscription cannot activate before the deal was sold (`deal_close_date <= start_date`). Records violating this are treated as invalid — filtered in staging and audited in quarantine. This removed 12 records from the dataset including all 7 active Dec-2025 subscriptions.
+- **deal_close_date rule**: a subscription cannot activate before the deal was sold (`deal_close_date <= start_date`). These records violate a business assumption about contract lifecycle (deal_close_date should not occur after subscription_start_date). Since the dataset documentation does not clarify the semantic role of deal_close_date, these rows are quarantined pending confirmation from the ingestion team. This removed 12 records from the dataset including all 7 active Dec-2025 subscriptions. 
 - **Negative ARR**: records with `arr_usd < 0` are filtered in staging. A singular test (`assert_no_negative_arr`) guards against future ingestion of negative values.
 - **Quarantine architecture**: invalid records from the source (inverted dates, deal_close violations, negative ARR) are persisted to an audit schema via dbt's `store_failures: true`. `stg_subscriptions_quarantine` is a consolidated view over those audit tables — adding a new validation rule requires only a new singular test, no model changes.
 - **Separation of concerns**: singular tests on `raw_subscriptions` catch source data problems (ingestion team's responsibility); YAML tests on `stg_subscriptions` guard DE-owned model logic. Only the former are surfaced in the quarantine view.

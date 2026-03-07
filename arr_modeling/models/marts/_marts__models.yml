@@ -37,6 +37,9 @@ models:
                 month. 0.0 for the synthetic churn row.
             tests:
                 - not_null
+                - dbt_utils.expression_is_true:
+                      arguments:
+                          expression: ">= 0"
 
           - name: previous_month_arr
             description: >

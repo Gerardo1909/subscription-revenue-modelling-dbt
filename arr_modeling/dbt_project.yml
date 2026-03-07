@@ -14,6 +14,10 @@ clean-targets:
     - "target"
     - "dbt_packages"
 
+vars:
+    spine_start_fallback: '2020-01-01'
+    spine_end_fallback: '2030-01-01'
+
 tests:
     arr_modeling:
         +store_failures: true

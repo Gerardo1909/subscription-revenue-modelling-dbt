@@ -1,7 +1,7 @@
 name: "arr_modeling"
 version: "1.0.0"
 
-profile: "arr_modeling"
+profile: "arr_profile"
 
 model-paths: ["models"]
 analysis-paths: ["analyses"]

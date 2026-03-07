@@ -1,0 +1,16 @@
+[project]
+name = "fintech-flow-dbt"
+version = "0.1.0"
+description = "Modeling ARR for a suscription-based revenue business."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dbt-duckdb>=1.10.0",
+]
+license = {text = "MIT"}
+authors = [
+    {name = "Gerardo Toboso", email = "gerardotoboso1909@gmail.com"}
+]
+maintainers = [
+    {name = "Gerardo Toboso", email = "gerardotoboso1909@gmail.com"}
+]

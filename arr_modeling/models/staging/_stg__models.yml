@@ -1,0 +1,129 @@
+version: 2
+
+models:
+    - name: stg_subscriptions
+      description: >
+          Cleaned and validated subscription records sourced from the raw data.
+          Each row represents one subscription period for a single account.
+
+          Cleaning applied in this layer:
+            - Columns renamed to a consistent snake_case convention
+            - All fields explicitly cast to their correct data types
+            - Positive free-subscription ARR (sentinel value ~1e-9) mapped to 0.00
+            - Records with start_date > end_date excluded (see stg_subscriptions_quarantine)
+            - Records with deal_close_date > start_date excluded (see stg_subscriptions_quarantine)
+            - Records with negative ARR excluded (see stg_subscriptions_quarantine)
+
+          Design decisions:
+            - end_date is treated as inclusive. A subscription is considered active on its end_date.
+            - Business rule: deal_close_date must be <= start_date. A subscription cannot activate
+              before the deal that sold it was closed.
+      columns:
+          - name: account_id
+            description: Numeric identifier for the customer account.
+            tests:
+                - not_null
+
+          - name: subscription_id
+            description: >
+                Unique identifier for the subscription period. Values are hashed/masked
+                and may contain non-hex characters in some records (data masking artifact).
+            tests:
+                - unique
+                - not_null
+
+          - name: subscription_quantity
+            description: Number of seats or units included in this subscription.
+            tests:
+                - not_null
+
+          - name: deal_close_date
+            description: >
+                Date the commercial deal was closed for this subscription.
+                Business rule: this date must be <= start_date. Records where deal_close_date
+                > start_date are excluded from this model and routed to stg_subscriptions_quarantine
+                (captured by the assert_deal_close_before_start singular test).
+
+          - name: start_date
+            description: First date the subscription is active (inclusive).
+            tests:
+                - not_null
+
+          - name: end_date
+            description: >
+                Last date the subscription is active (inclusive). Per design decision,
+                a subscription is active on its end_date. Used downstream to determine
+                whether a subscription is active on the last day of a given month.
+            tests:
+                - not_null
+
+          - name: product_line
+            description: Product family associated with the subscription.
+            tests:
+                - not_null
+                - accepted_values:
+                      arguments:
+                          values: ["Desktop", "Verify", "Web"]
+
+          - name: status
+            description: >
+                Subscription status at the time of data extraction.
+                'active' = currently running; 'expired' = terminated.
+            tests:
+                - not_null
+                - accepted_values:
+                      arguments:
+                          values: ["active", "expired"]
+
+          - name: arr_usd
+            description: >
+                Annual Recurring Revenue in USD for this subscription. Free subscriptions
+                that used a positive sentinel value ~1e-9 are normalized to 0.00 in this
+                layer (only positive values < $0.001 are zeroed; negative values are excluded
+                upstream). All values in this model are non-negative.
+            tests:
+                - not_null
+                - dbt_utils.expression_is_true:
+                      arguments:
+                          expression: ">= 0"
+
+    - name: stg_subscriptions_quarantine
+      description: >
+          Audit view that surfaces subscription records which failed data quality tests.
+          Each branch corresponds to a singular test in tests/ that detected invalid records.
+          The quarantine_reason column maps directly to the test name that caught the issue.
+
+          This model reads from dbt's store_failures audit schema, populated automatically
+          during dbt build or dbt test. It is not itself tested — its contents are
+          determined entirely by the tests that feed it, making additional validation redundant.
+
+          To add a new quarantine rule: write a singular test in tests/ returning failing rows,
+          then add a UNION ALL branch here referencing the new failure table.
+
+          Requires dbt build or dbt test to have been run at least once before querying.
+      columns:
+          - name: quarantine_reason
+            description: >
+                Name of the dbt singular test that flagged this record.
+                Used by the ingestion team to identify the remediation needed.
+
+          - name: account_id
+            description: Numeric identifier for the customer account.
+
+          - name: subscription_id
+            description: Unique identifier of the quarantined subscription.
+
+          - name: start_date
+            description: Raw start date as extracted from source (may be after end_date).
+
+          - name: end_date
+            description: Raw end date as extracted from source (may be before start_date).
+
+          - name: product_line
+            description: Product family associated with the subscription.
+
+          - name: status
+            description: Subscription status at the time of data extraction.
+
+          - name: arr_usd
+            description: Raw ARR value as extracted from source, without any normalization.

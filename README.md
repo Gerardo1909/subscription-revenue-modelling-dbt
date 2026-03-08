@@ -4,6 +4,8 @@
 
 Analytical modelling of **Annual Recurring Revenue (ARR)** for a subscription-based business, built with [dbt](https://www.getdbt.com/) and [DuckDB](https://duckdb.org/) for fully local, reproducible execution.
 
+![arr_dashboard_image](images/arr_dashboard.png)
+
 **Stack:** Python 3.13+ (for virtual environment) · dbt-duckdb · SQL · DuckDB
 
 ## Problem Statement

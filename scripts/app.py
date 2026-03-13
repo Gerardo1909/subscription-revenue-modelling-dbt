@@ -18,7 +18,9 @@ def load_data() -> pd.DataFrame:
 
 def fill_gaps(df: pd.DataFrame) -> pd.DataFrame:
     """Insert zero rows for months with no data (quarantine-driven gaps)."""
-    all_months = pd.date_range(df["date_month"].min(), df["date_month"].max(), freq="MS")
+    all_months = pd.date_range(
+        df["date_month"].min(), df["date_month"].max(), freq="MS"
+    )
     existing = set(df["date_month"].dt.to_period("M"))
     gap_rows = [
         {"date_month": m, "monthly_arr": 0.0}

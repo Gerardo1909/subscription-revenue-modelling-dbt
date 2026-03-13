@@ -4,13 +4,11 @@
 --   - Casts all fields to their correct data types
 --   - Maps the free-subscription sentinel ARR value (~1e-9) to 0.00
 --   - Excludes records with inverted start/end dates (routed to quarantine)
---   - Excludes records where deal_close_date > start_date (routed to quarantine)
 --   - Excludes records with negative ARR (routed to quarantine)
 --
 -- Design decisions:
 --   - end_date is inclusive: a subscription is considered active on its end_date
 --   - Only positive ARR values below $0.001 represent free subscriptions and are zeroed out
---   - Business rule: deal must be closed before or on the subscription start date
 
 with source as (
 
@@ -51,9 +49,6 @@ cleaned as (
     -- without confirmation from the ingestion team. They are excluded here and
     -- captured in the quarantine model for review.
     where subscription_start_date::date <= subscription_end_date::date
-      -- Business rule: the deal must be closed before or on the subscription
-      -- start date. Records where deal_close_date > start_date are invalid.
-      and subscription_deal_close_date::date <= subscription_start_date::date
       -- Negative ARR is a data quality error; guard for future invalid records.
       and subscription_arr_usd >= 0
 

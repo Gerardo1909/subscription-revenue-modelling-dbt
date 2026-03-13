@@ -36,7 +36,7 @@ staging/stg_subscriptions_quarantine   -- consolidated view of quarantined recor
 intermediate/int_date_spine            -- monthly calendar spine (dbt_utils.date_spine)
 intermediate/int_subscription_months  -- 1 row per subscription x active month
 intermediate/int_account_monthly_arr  -- ARR aggregated per account x month
-                                       -- + synthetic churn row + previous_month_arr LAG
+                                       -- gap-filled monthly series + previous_month_arr LAG
     |
     v
 marts/fct_monthly_arr                  -- final fact table with change classification
@@ -84,10 +84,10 @@ arr_modeling/
 
 ## BI checks
 
-After running `dbt build`, you culd execute a couple of interesting queries from a BI perspective:
+After running `dbt build`, you could execute a couple of interesting queries from a BI perspective:
 
 ```bash
-uv run streamlit run scripts/BI_queries.py
+uv run scripts/BI_queries.py
 ```
 
 This will print on console the result of the following two queries:
@@ -125,22 +125,21 @@ Opens at http://localhost:8501. Shows KPI cards and ARR trending chart.
 
 - **End date is inclusive**: a subscription with `end_date = Sep 8` is considered active throughout September (evaluated at last day of month).
 - **Free subscriptions**: ARR sentinel values (`1e-9`) are mapped to `$0.00` via `CASE WHEN arr > 0 AND arr < 0.001`. The positive guard prevents silently zeroing legitimate negative values.
-- **deal_close_date rule**: a subscription cannot activate before the deal was sold (`deal_close_date <= start_date`). These records violate a business assumption about contract lifecycle (deal_close_date should not occur after subscription_start_date). Since the dataset documentation does not clarify the semantic role of deal_close_date, these rows are quarantined pending confirmation from the ingestion team. This removed 12 records from the dataset including all 7 active Dec-2025 subscriptions. 
 - **Negative ARR**: records with `arr_usd < 0` are filtered in staging. A singular test (`assert_no_negative_arr`) guards against future ingestion of negative values.
-- **Quarantine architecture**: invalid records from the source (inverted dates, deal_close violations, negative ARR) are persisted to an audit schema via dbt's `store_failures: true`. `stg_subscriptions_quarantine` is a consolidated view over those audit tables — adding a new validation rule requires only a new singular test, no model changes.
+- **Quarantine architecture**: invalid records from the source (inverted dates, negative ARR) are persisted to an audit schema via dbt's `store_failures: true`. `stg_subscriptions_quarantine` is a consolidated view over those audit tables — adding a new validation rule requires only a new singular test, no model changes.
 - **Separation of concerns**: singular tests on `raw_subscriptions` catch source data problems (ingestion team's responsibility); YAML tests on `stg_subscriptions` guard DE-owned model logic. Only the former are surfaced in the quarantine view.
 
 ### Fact Table & ARR Classification
 
 - **Monthly grain**: a subscription is active in a month if it is live on the last day of that month (`start_date <= last_day(month) AND end_date >= last_day(month)`).
-- **Synthetic churn row**: `int_account_monthly_arr` appends one row per account for the calendar month immediately after the last active month (`monthly_arr = 0`). Without it, the transition from active to $0 would be invisible in the fact table — the churn event would simply not exist. This does **not** fill gaps between subscriptions; it only marks the single month when the account went inactive.
-- **LAG after UNION ALL**: `previous_month_arr` is computed via `LAG()` over the full combined dataset (real rows + synthetic churn row). This ensures the synthetic row receives the correct prior value from the last real month without any manual override.
+- **Gap-filled account-month series**: `int_account_monthly_arr` builds a continuous monthly spine per account from `first_active_month` to `last_active_month`, then left-joins real ARR months and fills missing months with `0.0`. This makes interim inactivity explicit in the model.
+- **LAG over gap-filled timeline**: `previous_month_arr` is computed via `LAG()` over the full gap-filled series per account. This enables correct detection of interim transitions such as `churn` in a zero month and `reactivation` when ARR resumes.
 - **change_category logic** (evaluated in order):
 
 | Category | Condition |
 |----------|-----------|
 | `new` | First month the account ever had ARR |
-| `churn` | ARR drops to 0 from a non-zero base (includes synthetic churn row) |
+| `churn` | ARR drops to 0 from a non-zero base |
 | `reactivation` | ARR > 0 after a gap (`previous_month_arr = 0`, not first month) |
 | `upgrade` | ARR increased from a non-zero base |
 | `downgrade` | ARR decreased but remains > 0 |

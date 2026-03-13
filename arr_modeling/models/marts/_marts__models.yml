@@ -3,15 +3,15 @@ version: 2
 models:
     - name: fct_monthly_arr
       description: >
-          Monthly ARR fact table. One row per (account_id, date_month), covering every
-          month the account had at least one active subscription plus one synthetic churn
-          row appended for the month immediately following the last active month.
+          Monthly ARR fact table. One row per (account_id, date_month), covering a
+          continuous account-month timeline from first_active_month to last_active_month,
+          with missing intermediate months explicitly filled as monthly_arr = 0.0.
 
           Classifies each month's ARR movement into a change_category so consumers can
           track subscription health over time without additional window functions.
 
-          Source: int_account_monthly_arr (account-level aggregation with pre-computed
-          previous_month_arr via LAG).
+          Source: int_account_monthly_arr (account-level aggregation with gap filling and
+          pre-computed previous_month_arr via LAG).
       tests:
           - dbt_utils.unique_combination_of_columns:
                 arguments:
@@ -26,15 +26,15 @@ models:
 
           - name: date_month
             description: >
-                First day of the calendar month. Includes real months where at least one
-                subscription was active, plus one synthetic churn month per account.
+                First day of the calendar month in the continuous per-account timeline
+                between first_active_month and last_active_month (including gap months).
             tests:
                 - not_null
 
           - name: monthly_arr
             description: >
                 Total Annual Recurring Revenue in USD for all active subscriptions in this
-                month. 0.0 for the synthetic churn row.
+                month. Gap months are explicitly represented as 0.0.
             tests:
                 - not_null
                 - dbt_utils.expression_is_true:
@@ -43,9 +43,8 @@ models:
 
           - name: previous_month_arr
             description: >
-                Total ARR for the immediately preceding month in the data. 0 for the first
-                month the account appears. For the synthetic churn row this equals the
-                last real active month's ARR.
+                Total ARR for the immediately preceding month in the gap-filled per-account
+                timeline. 0 for the first month the account appears.
             tests:
                 - not_null
 
@@ -58,8 +57,8 @@ models:
 
           - name: is_active
             description: >
-                True if the account has ARR > 0 in the month. False for the synthetic
-                churn row and any month where all active subscriptions are free (arr = 0).
+                True if the account has ARR > 0 in the month. False for gap months and any
+                month where all active subscriptions are free (arr = 0).
             tests:
                 - not_null
 
@@ -69,7 +68,7 @@ models:
                   new          — first month the account ever had ARR
                   upgrade      — ARR increased from a non-zero base
                   downgrade    — ARR decreased but remains above zero
-                  churn        — ARR dropped to 0 (includes synthetic churn rows)
+                  churn        — ARR dropped to 0 from a non-zero base
                   reactivation — ARR > 0 after one or more months of absence
                   no_change    — ARR unchanged month-over-month
             tests:
@@ -77,9 +76,9 @@ models:
                 - accepted_values:
                       arguments:
                           values:
-                              - 'new'
-                              - 'upgrade'
-                              - 'downgrade'
-                              - 'churn'
-                              - 'reactivation'
-                              - 'no_change'
+                              - "new"
+                              - "upgrade"
+                              - "downgrade"
+                              - "churn"
+                              - "reactivation"
+                              - "no_change"

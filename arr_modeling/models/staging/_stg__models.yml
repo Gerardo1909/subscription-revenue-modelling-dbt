@@ -11,13 +11,10 @@ models:
             - All fields explicitly cast to their correct data types
             - Positive free-subscription ARR (sentinel value ~1e-9) mapped to 0.00
             - Records with start_date > end_date excluded (see stg_subscriptions_quarantine)
-            - Records with deal_close_date > start_date excluded (see stg_subscriptions_quarantine)
             - Records with negative ARR excluded (see stg_subscriptions_quarantine)
 
           Design decisions:
             - end_date is treated as inclusive. A subscription is considered active on its end_date.
-            - Business rule: deal_close_date must be <= start_date. A subscription cannot activate
-              before the deal that sold it was closed.
       columns:
           - name: account_id
             description: Numeric identifier for the customer account.
@@ -40,9 +37,7 @@ models:
           - name: deal_close_date
             description: >
                 Date the commercial deal was closed for this subscription.
-                Business rule: this date must be <= start_date. Records where deal_close_date
-                > start_date are excluded from this model and routed to stg_subscriptions_quarantine
-                (captured by the assert_deal_close_before_start singular test).
+                Kept as a business attribute for analysis and auditing.
 
           - name: start_date
             description: First date the subscription is active (inclusive).

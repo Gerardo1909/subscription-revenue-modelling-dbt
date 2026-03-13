@@ -61,20 +61,22 @@ models:
 
     - name: int_account_monthly_arr
       description: >
-          Account-level ARR aggregated to monthly granularity, extended with a
-          synthetic churn row and LAG-based previous_month_arr. One row per
+          Account-level ARR aggregated to monthly granularity with gap-filled
+          account-month continuity and LAG-based previous_month_arr. One row per
           (account_id, date_month).
 
           Pipeline (see inline SQL comments for detail):
             1. Aggregate ARR across all active subscriptions per account × month.
             2. Compute first_active_month / last_active_month per account.
-            3. Append one synthetic churn row per account (the month after the
-               last active month, arr = 0). This makes the churn event explicit —
-               without it, the transition from active to inactive would never appear
-               in fct_monthly_arr. Does NOT fill gaps between subscriptions.
-            4. Run LAG for previous_month_arr over the full combined dataset
-               (real + synthetic) so all window values are consistent.
+            3. Build a continuous account × month series between those bounds
+               using int_date_spine.
+            4. Left join real ARR months to that series and fill missing months
+               with arr = 0.0, making interim inactivity explicit.
+            5. Run LAG for previous_month_arr over the full gap-filled timeline
+               so month-over-month transitions are computed consistently.
 
+          This allows correct classification of interim churn/reactivation
+          scenarios (for example, active → zero → active across consecutive months).
           Consumed by fct_monthly_arr, which only adds classification logic.
       tests:
           - dbt_utils.unique_combination_of_columns:
@@ -90,15 +92,17 @@ models:
 
           - name: date_month
             description: >
-                First day of the calendar month. Includes real active months plus
-                one synthetic churn month per account (the month after last_active_month).
+                First day of the calendar month in the continuous per-account
+                series from first_active_month to last_active_month (inclusive).
+                Includes both real ARR months and gap-filled zero-ARR months.
             tests:
                 - not_null
 
           - name: monthly_arr
             description: >
                 Total Annual Recurring Revenue in USD across all active subscriptions
-                for this account in this month. 0.0 for the synthetic churn row.
+                for this account in this month. Gap months with no active subscription
+                are explicitly represented as 0.0.
             tests:
                 - not_null
 
@@ -112,9 +116,7 @@ models:
 
           - name: previous_month_arr
             description: >
-                Total ARR for the immediately preceding month in the dataset.
-                0 for the first month the account appears. For the synthetic churn
-                row this equals the last real active month's ARR (LAG over combined
-                dataset).
+                Total ARR for the immediately preceding month in the gap-filled
+                per-account timeline. 0.0 for the first month the account appears.
             tests:
                 - not_null

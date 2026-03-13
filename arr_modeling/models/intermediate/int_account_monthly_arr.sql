@@ -1,24 +1,18 @@
 -- Aggregates subscription-level ARR to account × month granularity and
--- prepares the full dataset (real rows + synthetic churn row) for mart classification.
+-- fills account-month gaps so interim churn/reactivation are modeled explicitly.
 --
 -- Pipeline:
---   1. Aggregate: sum ARR across all active subscriptions per account × month.
---   2. Bounds: compute first_active_month / last_active_month per account via
---      window functions. These are needed to distinguish 'new' from 'reactivation'
---      in the mart and to identify where to append the synthetic churn row.
---   3. Synthetic churn: append one row per account for the calendar month
---      immediately after the last active month (monthly_arr = 0). This makes
---      the churn event explicit in the data — without it, the last real month
---      would simply be the final row with no signal that the account stopped.
---      NOTE: this does NOT fill gaps between subscriptions; it only marks
---      the single month when the account transitioned from active to inactive.
---   4. LAG: compute previous_month_arr over the full combined dataset (real +
---      synthetic). Running LAG after the UNION ALL means the synthetic churn row
---      automatically receives the correct previous value from the last real month,
---      with no manual override needed.
+--   1. Aggregate real ARR by account × month from active subscriptions.
+--   2. Compute per-account bounds (first and last active month).
+--   3. Build a continuous month series per account between those bounds.
+--   4. Left join real ARR onto the continuous series and coalesce gaps to 0.
+--   5. Compute previous_month_arr with LAG over the gap-filled series.
 --
--- Output: one row per (account_id, date_month), including one synthetic churn row
--- per account. Consumed by fct_monthly_arr, which only adds classification logic.
+-- Why:
+--   - If an account is active in Oct, inactive in Nov, and active again in Dec,
+--     Nov must exist as monthly_arr = 0 so the mart can classify:
+--       Nov -> churn (0 from >0)
+--       Dec -> reactivation (>0 from 0)
 
 with subscription_months as (
 
@@ -27,8 +21,6 @@ with subscription_months as (
 ),
 
 -- Step 1 — Aggregate subscription-level ARR to account × month.
--- Multiple subscriptions can be active simultaneously (different product lines
--- or overlapping renewals); sum them into a single monthly figure.
 monthly_arr as (
 
     select
@@ -41,58 +33,53 @@ monthly_arr as (
 
 ),
 
--- Step 2 — Identify the first and last active month per account.
--- first_active_month → used by fct_monthly_arr to classify the 'new' category.
--- last_active_month  → used below to place the synthetic churn row.
-with_bounds as (
+-- Step 2 — Per-account active bounds used to generate continuous month series.
+account_bounds as (
 
     select
         account_id,
-        date_month,
-        monthly_arr,
-        min(date_month) over (partition by account_id) as first_active_month,
-        max(date_month) over (partition by account_id) as last_active_month
+        min(date_month) as first_active_month,
+        max(date_month) as last_active_month
 
     from monthly_arr
+    group by account_id
 
 ),
 
--- Step 3 — Synthetic churn row: one row per account for the month after the
--- last active month, with monthly_arr = 0.
--- Without this row, churn would never appear in fct_monthly_arr because
--- the subscription data simply has no row for that period.
-synthetic_churn as (
+-- Step 3 — Continuous account × month series between first and last active month.
+-- We join account bounds to the global date spine and keep only months in-range.
+account_month_spine as (
 
     select
-        account_id,
-        (date_month + interval '1 month')::date as date_month,
-        0.0                                      as monthly_arr,
-        first_active_month,
-        last_active_month
+        b.account_id,
+        d.date_month,
+        b.first_active_month,
+        b.last_active_month
 
-    from with_bounds
-    where date_month = last_active_month
-
-),
-
--- Step 4 — Combine real rows and the synthetic churn row.
-combined as (
-
-    select account_id, date_month, monthly_arr, first_active_month, last_active_month
-    from with_bounds
-
-    union all
-
-    -- Synthetic churn row (arr = 0, month after last active).
-    select account_id, date_month, monthly_arr, first_active_month, last_active_month
-    from synthetic_churn
+    from account_bounds as b
+    inner join {{ ref('int_date_spine') }} as d
+        on d.date_month between b.first_active_month and b.last_active_month
 
 ),
 
--- Step 5 — Compute previous_month_arr via LAG over the full combined dataset.
--- Running the window here (after the UNION ALL) ensures the synthetic churn row
--- receives the correct value from the last real month automatically.
--- coalesce to 0 for the first month an account appears (no prior row).
+-- Step 4 — Gap-fill missing months with zero ARR.
+-- Real months keep their aggregated ARR; absent months become explicit 0.
+filled as (
+
+    select
+        s.account_id,
+        s.date_month,
+        coalesce(m.monthly_arr, 0.0) as monthly_arr,
+        s.first_active_month
+
+    from account_month_spine as s
+    left join monthly_arr as m
+        on  m.account_id = s.account_id
+        and m.date_month = s.date_month
+
+),
+
+-- Step 5 — Previous month ARR over full gap-filled timeline.
 with_lag as (
 
     select
@@ -105,10 +92,10 @@ with_lag as (
                 partition by account_id
                 order by date_month
             ),
-            0
+            0.0
         ) as previous_month_arr
 
-    from combined
+    from filled
 
 )
 

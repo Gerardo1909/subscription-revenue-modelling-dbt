@@ -59,10 +59,22 @@ marts/fct_monthly_arr                  -- final fact table with change classific
 # Clone and install dependencies
 git clone https://github.com/Gerardo1909/subscription-revenue-modelling-dbt> && cd subscription-revenue-modelling-dbt
 uv sync
+```
 
-# Configure your local profile (not committed to git)
-# Create arr_modeling/profiles.yml pointing to subs_data.duckdb
+Before running the project, you should create a "profiles.yml" file in the `arr_modeling` directory. Here goes an example configuration:
 
+```yaml
+arr_profile:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "subs_data.duckdb"
+```
+
+Then you could run the project:
+
+```bash
 # Install dbt packages and build
 cd arr_modeling
 uv run dbt deps

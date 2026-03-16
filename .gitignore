@@ -22,7 +22,7 @@ data/
 target/
 dbt_packages/
 logs/
-packages-lock.yml
+package-lock.yml
 
 # DuckDB database (Datos locales)
 *.duckdb
